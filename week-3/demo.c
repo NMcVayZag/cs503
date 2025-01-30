@@ -28,6 +28,7 @@ int main(){
 
     // free the buffer when it is no longer needed. Since we already printed we don't
     //need the buff otherwise we might get memory leaks/bugs/segfaults
-    //free(buff);
+    // commenting out the line below will cause a memory leak of 50bytes
+    free(buff);
     return 0;
 }
