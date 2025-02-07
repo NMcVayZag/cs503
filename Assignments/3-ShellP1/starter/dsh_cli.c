@@ -1,7 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-// User interface with main function
 #include "dshlib.h"
 // if input is exit then exit the program
 
@@ -47,10 +46,59 @@
  */
 int main()
 {
-    char *cmd_buff;
+    char *cmd_buff = (char *)malloc(SH_CMD_MAX * sizeof(char));
+    if (cmd_buff == NULL) {
+        fprintf(stderr, "Memory allocation failed\n");
+        return 1;
+    }
     int rc = 0;
     command_list_t clist;
 
-    printf(M_NOT_IMPL);
-    exit(EXIT_NOT_IMPL);
+    while(1){
+
+            printf("%s", SH_PROMPT);
+            if (fgets(cmd_buff, ARG_MAX, stdin) == NULL){
+                printf("\n");
+                return ERR_CMD_OR_ARGS_TOO_BIG;
+            }
+            //remove the trailing \n from cmd_buff
+            cmd_buff[strcspn(cmd_buff,"\n")] = '\0';
+
+            // check for the exit command
+            if(strcmp(cmd_buff, EXIT_CMD) == 0){
+                exit(EXIT_SUCCESS);
+            }
+            // count commands by pipe character
+            int command_count = 0;
+            for (char *c = cmd_buff; *c != '\0'; c++){
+                if(*c == PIPE_CHAR){
+                    command_count++;
+                }
+            }
+            if (command_count >= CMD_MAX) {
+                printf(CMD_ERR_PIPE_LIMIT, CMD_MAX);
+                return ERR_TOO_MANY_COMMANDS;
+            }
+            // check if input is empty
+            if (cmd_buff[0] == '\0') {
+                printf("%s\n", CMD_WARN_NO_CMD);;
+                return WARN_NO_CMDS;
+            }
+
+            // build the command list
+            rc = build_cmd_list(cmd_buff, &clist);
+            if (rc == OK){
+                printf(CMD_OK_HEADER, clist.num);
+                for (int i = 0; i < clist.num; i++){
+                    if(strcmp(clist.commands[i].exe, "dragon") == 0){
+                        print_dragon();
+                    }else{
+                    printf("<%d> %s %s\n", i+1, clist.commands[i].exe, clist.commands[i].args);
+                    }
+                }
+            }
+    
+      }
+    free(cmd_buff);
+    return 0;
 }
