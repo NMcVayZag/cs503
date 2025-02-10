@@ -77,13 +77,13 @@ int main()
             }
             if (command_count >= CMD_MAX) {
                 printf(CMD_ERR_PIPE_LIMIT, CMD_MAX);
-                return ERR_TOO_MANY_COMMANDS;
+                continue;
             }
-            // check if input is empty
+            // Check if input is empty
             if (cmd_buff[0] == '\0') {
-                printf("%s\n", CMD_WARN_NO_CMD);;
-                return WARN_NO_CMDS;
-            }
+                printf("%s\n", CMD_WARN_NO_CMD);
+                continue;
+        }
 
             // build the command list
             rc = build_cmd_list(cmd_buff, &clist);
