@@ -60,6 +60,13 @@ int parse_input(char *input, cmd_buff_t *cmd){
     while(isspace((unsigned char)*buffer)) buffer++;
     // printf("Current buff: %s\n", buffer);
 
+    // check if buffer is empty
+    if (*buffer == '\0') {
+    cmd->argv[0] = NULL; // null terminate first arg
+    printf("%s\n", CMD_WARN_NO_CMD);
+    return WARN_NO_CMDS;
+    }
+
     // main parsing of user command
     char *arg =buffer; // set arg to the start of the buffer
     int in_quotes =0; // tracking if we are in a quoted string
@@ -67,7 +74,8 @@ int parse_input(char *input, cmd_buff_t *cmd){
 
     while (*buffer){
         if (*buffer == '"'){
-            in_quotes = !in_quotes; // if we hit quotes we toggle the inquotes variable
+            in_quotes = !in_quotes;
+            buffer++; // if we hit quotes we toggle the inquotes variable
         } else if(isspace((unsigned char)*buffer) && !in_quotes){ //if we hit a space and we're not in quotes
                 *write_ptr++ ='\0'; // null terminated the current arg since we are at the end
                 if (arg[0] != '\0') { // If the current argument is not empty
@@ -77,9 +85,9 @@ int parse_input(char *input, cmd_buff_t *cmd){
             while (isspace((unsigned char)* (++buffer)));
             arg = buffer; // set the arg to that beignin of next arg
             continue;
+        }else {*write_ptr++ = *buffer++; // copy obver the characters to write ptr if not """ or space outside quotes
+            }
         }
-        *write_ptr++ = *buffer++; // copy obver the characters to write ptr   
-    }
     *write_ptr = '\0'; //null terminate the last argument
     if (arg[0] != '\0'){ // checking that the last argument is not empty
         cmd->argv[cmd->argc++] =arg; // add the argument to the argv list
@@ -107,21 +115,22 @@ int exec_local_cmd_loop()
         }
         //remove the trailing \n from cmd_buff
         cmd_buff[strcspn(cmd_buff,"\n")] = '\0';
-        printf("Command entered: %s\n", cmd_buff);
+
+        // checking if there was no input
+        if (cmd_buff[0] == '\0') {
+            printf("%s\n", CMD_WARN_NO_CMD);
+            continue;
+        } 
+
+        //printf("Command entered: %s\n", cmd_buff);
         rc = parse_input(cmd_buff, &cmd);
         if (rc!=0){
-            printf("ERROR CODE: %d", rc);
+            printf("PARSING FAILURE ERROR CODE: %d\n", rc);
             exit(1);
         } 
 
-        if(strcmp(cmd.argv[0],"exit")==0){
-            exit(1);
-        }
-        // Print the argument array
-        printf("Parsed arguments:\n");
-        for (int i = 0; i < cmd.argc; i++) { //  since we have direct access to cmd struct and not accesing
-                                            //via pointer we can use the (.) notation to access its attributes
-            printf("argv[%d]: %s\n", i, cmd.argv[i]);
+        if(strcmp(cmd.argv[0],EXIT_CMD)==0){
+            exit(0);
         }
 
         if (cmd.argc >0 && strcmp(cmd.argv[0], "cd")==0){// check if first arg is cd
@@ -133,33 +142,30 @@ int exec_local_cmd_loop()
                 }
                 continue;
             } else {
-                printf("TOO MANY ARGS FOR CD\n");
-                continue;
+                printf("TOO MANY ARGS FOR CD");
+                exit(1);
             }
 
-        }
+        }else{
         // create fork & exec processes for external commands
         pid_t pid = fork(); // create a new child process by duplicated the current one - creating a child
         if (pid == 0) {//child process
         execvp(cmd.argv[0], cmd.argv); // execvp the external command if child process
-        perror("execvp"); // throw error if the execvp returns an error, if not it won't return anything
+        printf("execvp error: invalid command\n"); // if execvp fails it will return and execute these
         exit(1);
         } else if(pid >0){// parent process
             int status;
-            waitpid(pid, &status, 0); // wait for child process to finish where status is the exit status of
-        } else {                      // the child process
-            perror("fork failure"); // print fork failure when fork returns -1 to pid
+            waitpid(pid, &status, 0); // wait for child process to finish where status is child exit status
+            if (WIFEXITED(status) && WEXITSTATUS(status) != 0) {
+                printf("Child process exited with status %d\n", WEXITSTATUS(status));
+                exit(1);
+            }
+        } else {                     
+            perror("Fork failure \n"); // print fork failure when fork returns -1 to pid
+        }
         }
 
-
     }
-
- 
-        //IMPLEMENT THE REST OF THE REQUIREMENTS
     
-
-    // TODO IMPLEMENT if not built-in command, fork/exec as an external command
-    // for example, if the user input is "ls -l", you would fork/exec the command "ls" with the arg "-l"
-
     return OK;
 }
