@@ -162,10 +162,11 @@ int exec_local_cmd_loop()
             }
         } else {                     
             perror("Fork failure \n"); // print fork failure when fork returns -1 to pid
+            exit(1);
         }
         }
 
     }
-    
+
     return OK;
 }
