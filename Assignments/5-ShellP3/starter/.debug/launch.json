@@ -1,14 +1,11 @@
 {
-    "version": "0.2.0",
     "configurations": [
         {
             "name": "(gdb) 5-ShellP3",
             "type": "cppdbg",
             "request": "launch",
             "program": "${workspaceFolder}/5-ShellP3/starter/dsh",
-            "args": [
-                ""
-            ],
+            "args": [""],
             "stopAtEntry": false,
             "cwd": "${workspaceFolder}/5-ShellP3/starter",
             "environment": [],
