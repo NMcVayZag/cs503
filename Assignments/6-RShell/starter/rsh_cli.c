@@ -108,6 +108,19 @@ int exec_remote_cmd_loop(char *address, int port){
         return client_cleanup(client_socket, cmd_request_buff, cmd_response_buff, ERR_RDSH_CLIENT);
     }
 
+    int flags = fcntl(client_socket, F_GETFL);
+    if (flags == -1) {
+        perror("fcntl failed");
+        return -1;
+    }
+
+    flags |= O_NONBLOCK;  // Set the O_NONBLOCK flag
+    // flags &= ~O_NONBLOCK; // this is blocking
+    if (fcntl(client_socket, F_SETFL, flags) == -1) {
+        perror("fcntl failed to set non-blocking mode");
+        return -1;
+    }
+
     // infinite loop grabbing user inputed commands
     while(1){
         memset(cmd_request_buff, 0, RDSH_COMM_BUFF_SZ);
@@ -138,14 +151,8 @@ int exec_remote_cmd_loop(char *address, int port){
 
         // create loop to collect response from server
         printf("waiting for response from server...\n");
+        sleep(1);
         while((bytes_received = recv(client_socket, cmd_response_buff, RDSH_COMM_BUFF_SZ-1, 0))>0){
-            if (bytes_received < 0 ){
-                perror("recv");
-                return client_cleanup(client_socket, cmd_request_buff, cmd_response_buff, ERR_RDSH_COMMUNICATION);
-            } else if (bytes_received == 0){
-                printf("Server disconnected\n");
-                return client_cleanup(client_socket, cmd_request_buff, cmd_response_buff, OK);
-            }
             // print out server response data
             // printf("%.*s\n", (int)bytes_received, cmd_response_buff);
             // printf("received %ld bytes from server\n", bytes_received);
@@ -157,8 +164,16 @@ int exec_remote_cmd_loop(char *address, int port){
             }
 
         }
-            printf("response from server: %s\n", cmd_response_buff);
-            // printf("length of response from server: %ld\n", strlen(cmd_response_buff));
+        if (bytes_received < 0 ){
+            perror("recv");
+            return client_cleanup(client_socket, cmd_request_buff, cmd_response_buff, ERR_RDSH_COMMUNICATION);
+        } else if (bytes_received == 0){
+            printf("Server disconnected\n");
+            return client_cleanup(client_socket, cmd_request_buff, cmd_response_buff, OK);
+        }
+        
+        printf("response from server: %s\n", cmd_response_buff);
+        // printf("length of response from server: %ld\n", strlen(cmd_response_buff));
 
         // check if the command request is to exit or stop-server
         if (strcmp(cmd_response_buff, "exit")== 0){

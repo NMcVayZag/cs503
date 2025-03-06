@@ -285,18 +285,16 @@ int exec_client_requests(int cli_socket) {
     int bytes_received;
     int is_last_chunk;
     char eof_char = RDSH_EOF_CHAR;
-    
-    while(1){
-        char *io_buff = malloc(RDSH_COMM_BUFF_SZ);
-        if (io_buff == NULL){
-            perror("malloc");
-            return ERR_RDSH_COMMUNICATION;
+    char *io_buff = malloc(RDSH_COMM_BUFF_SZ);
+    if (io_buff == NULL){
+        perror("malloc");
+        return ERR_RDSH_COMMUNICATION;
         }
-
+    printf("trying to receive message from client...\n\n");
+    while(1){
 
             // while loop for collecting whole message from client
         memset(io_buff, 0, RDSH_COMM_BUFF_SZ);
-        printf("trying to receive message from client...\n\n");
         while((bytes_received = recv(cli_socket, io_buff, RDSH_COMM_BUFF_SZ - 1, 0)) > 0){
             if (bytes_received < 0){
                 perror("recv");
@@ -313,7 +311,7 @@ int exec_client_requests(int cli_socket) {
                 break;
             }
         }
-        printf("buffer received from client: %s\n", io_buff);
+        //printf("buffer received from client: %s\n", io_buff);
         // printf("length of buffer received from client: %ld\n", strlen(io_buff));
 
 
@@ -327,17 +325,22 @@ int exec_client_requests(int cli_socket) {
             break;
         }
         //exeute given command
-        rc = rsh_execute_commands(cli_socket, io_buff);
-        if (rc != OK) {
-            break;
+        if (bytes_received > 0 ) {
+            printf("buffer received from client: %s\n", io_buff);
+            rc = rsh_execute_commands(cli_socket, io_buff);
+            printf("main execution returned: %d\n",rc);
+            if (rc != OK) {
+                printf("Error occured. Retry command.");
+            }
+            if(rc == OK){
+                send_message_eof(cli_socket);
+            }
+            
         }
-        if(rc == OK){
-            free(io_buff);
-            send_message_eof(cli_socket);
-            break;
-        }
-    free(io_buff);
+        
     }
+    free(io_buff);
+    
     return rc;
 }
 
@@ -525,10 +528,13 @@ int rsh_execute_commands(int cli_sock, char *buff) {
                 continue;
             }
 
+            printf("we are starting to fork\n");
             pid_t pid = fork(); //  create new process by duplicating the current one
+            printf("pid: %d\n", pid);
             if (pid == 0) {
                 // Child process
-                printf("got to child process");
+                printf("got to child process\n");
+                fflush(stdout);
 
                 pids[i] = getpid(); // add pid to list 
 
@@ -556,6 +562,7 @@ int rsh_execute_commands(int cli_sock, char *buff) {
                             perror("dup2 stdout to client socket");
                             exit(EXIT_FAILURE);
                         }
+                        // fflush(stdout);
                     }
 
                     // Close all pipe file descriptors in child process since necessary ones have been duped to standard input and output and so they cannot be picked up by other child processes
@@ -574,6 +581,7 @@ int rsh_execute_commands(int cli_sock, char *buff) {
             if (pipes_neccessary == 0) {
                 if (dup2(cli_sock, STDOUT_FILENO)<0){
                     printf("Error redirecting single command output to client socket\n");
+                    fflush(stdout);
                 }
 
                 // Execute the command with its arguments by replacing the current process with the new process
@@ -581,9 +589,12 @@ int rsh_execute_commands(int cli_sock, char *buff) {
                     perror("execvp");
                     exit(EXIT_FAILURE);
                 }
+                // printf("flushing single command");
+                fflush(stdout);
                 }
             } else if (pid < 0) {
                 // Fork failed
+                rc = 1;
                 perror("fork");
                 exit(EXIT_FAILURE);
             }
@@ -607,16 +618,20 @@ int rsh_execute_commands(int cli_sock, char *buff) {
             // }
             if (WIFEXITED(status) && WEXITSTATUS(status) != 0) { //check if child procces was successful
                 printf("Child process with PID %d exited with status %d\n", pids[i], WEXITSTATUS(status));
-                rc = OK;
-                
+                printf("hit error code hi nick");
+                rc = 1;
+                char buf[10];
+                strcpy(buf, "send");
+                send_message_string(cli_sock, buf);
             }
         }
         
 
+        
         break;
     }
-    close(cli_sock);
-
+    
+    fflush(stdout);
     return rc;
 }
 
