@@ -196,3 +196,35 @@ EOF
         # Check if ls response is received
     [[ "$stripped_output" == *"$expected_substring"* ]]
 }
+
+@test "Remote cd functionality check" {
+    start_server
+
+    run ./dsh -c <<EOF
+cd bats
+ls
+stop-server
+EOF
+
+    # Strip all whitespace (spaces, tabs, newlines) from the output
+    stripped_output=$(echo "$output" | tr -d '[:space:]')
+
+
+    # These echo commands will help with debugging and will only print if the test fails
+    echo "Captured stdout:" 
+    echo "Output: $output"
+    echo "StrippedOutput: $strippedoutput"
+    echo "Exit Status: $status"
+    expected_substring="responsefromserver:assignment_tests.shstudent_tests.sh"
+
+        # Check if the actual output contains expected output
+    if [[ "$stripped_output" != *"$expected_substring"* ]]; then
+        echo "Expected substring not found in output"
+        echo "Expected substring: $expected_substring"
+        echo "Stripped Output: $stripped_output"
+    fi
+        # Assertions
+    [ "$status" -eq 0 ]
+        # Check if ls response is received
+    [[ "$stripped_output" == *"$expected_substring"* ]]
+}
