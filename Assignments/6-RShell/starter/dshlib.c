@@ -133,7 +133,7 @@ int exec_local_cmd_loop(){
         //remove the trailing \n from cmd_buff
         cmd_buff[strcspn(cmd_buff,"\n")] = '\0';
 
-        // seporating the input via pipes using strtok
+        // separating the input via pipes using strtok
         char *commands[CMD_MAX];
         int num_commands = 0;
         char *command = strtok(cmd_buff, PIPE_STRING);

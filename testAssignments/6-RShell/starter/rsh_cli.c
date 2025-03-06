@@ -10,6 +10,10 @@
 
 #include "dshlib.h"
 #include "rshlib.h"
+
+
+
+
 /*
  * exec_remote_cmd_loop(server_ip, port)
  *      server_ip:  a string in ip address format, indicating the servers IP
@@ -86,88 +90,36 @@
  *   function after cleaning things up.  See the documentation for client_cleanup()
  *      
  */
-int exec_remote_cmd_loop(char *address, int port){
-    int client_socket;
-    char *cmd_request_buff = NULL;
-    char *cmd_response_buff = NULL;
-    ssize_t bytes_sent;
-    ssize_t bytes_received;
-    int is_EOF;
+int exec_remote_cmd_loop(char *address, int port)
+{
+    char *cmd_buff;
+    char *rsp_buff;
+    int cli_socket;
+    ssize_t io_size;
+    int is_eof;
 
-    // allocate buffers for sending req and recieving responses
-    cmd_request_buff = malloc(RDSH_COMM_BUFF_SZ);
-    cmd_response_buff = malloc(RDSH_COMM_BUFF_SZ);
-    if (cmd_request_buff == NULL || cmd_response_buff == NULL){
-        perror("malloc");
-        return client_cleanup(client_socket, cmd_request_buff, cmd_response_buff, ERR_MEMORY);
+    // TODO set up cmd and response buffs
+
+    cli_socket = start_client(address,port);
+    if (cli_socket < 0){
+        perror("start client");
+        return client_cleanup(cli_socket, cmd_buff, rsp_buff, ERR_RDSH_CLIENT);
     }
 
-    // create a client connection to the server
-    client_socket = start_client(address, port);
-    if (client_socket < 0){
-        return client_cleanup(client_socket, cmd_request_buff, cmd_response_buff, ERR_RDSH_CLIENT);
+    while (1) 
+    {
+        // TODO print prompt
+
+        // TODO fgets input
+
+        // TODO send() over cli_socket
+
+        // TODO recv all the results
+
+        // TODO break on exit command
     }
 
-    // infinite loop grabbing user inputed commands
-    while(1){
-        memset(cmd_request_buff, 0, RDSH_COMM_BUFF_SZ);
-        memset(cmd_response_buff, 0, RDSH_COMM_BUFF_SZ);
-        printf("waiting for a command from user...\n");
-        printf("%s", SH_PROMPT);
-
-        if (fgets(cmd_request_buff, RDSH_COMM_BUFF_SZ, stdin)== NULL){
-            perror("fgets");
-            return client_cleanup(client_socket, cmd_request_buff, cmd_response_buff, ERR_RDSH_COMMUNICATION);
-        }
-
-        size_t len = strlen(cmd_request_buff);
-        if (len > 0 && cmd_request_buff[len - 1] == '\n') {
-            cmd_request_buff[len - 1] = RDSH_EOF_CHAR; // Replace newline character with EOF character
-        } else {
-            cmd_request_buff[len] = RDSH_EOF_CHAR; // Append EOF character
-            len++;
-        }
-
-        // send command to the server
-        printf("sending %s to server...\n", cmd_request_buff);
-        bytes_sent = send(client_socket, cmd_request_buff, len, 0);
-        if (bytes_sent <0){
-            perror("Send");
-            return client_cleanup(client_socket, cmd_request_buff, cmd_response_buff, ERR_RDSH_COMMUNICATION);
-        }
-
-        // create loop to collect response from server
-        printf("waiting for response from server...\n");
-        while((bytes_received = recv(client_socket, cmd_response_buff, RDSH_COMM_BUFF_SZ-1, 0))>0){
-            if (bytes_received < 0 ){
-                perror("recv");
-                return client_cleanup(client_socket, cmd_request_buff, cmd_response_buff, ERR_RDSH_COMMUNICATION);
-            } else if (bytes_received == 0){
-                printf("Server disconnected\n");
-                return client_cleanup(client_socket, cmd_request_buff, cmd_response_buff, OK);
-            }
-            // print out server response data
-            // printf("%.*s\n", (int)bytes_received, cmd_response_buff);
-            // printf("received %ld bytes from server\n", bytes_received);
-            // check if the last byte we recieved is the EOF char 
-            is_EOF = (cmd_response_buff[bytes_received -1] == RDSH_EOF_CHAR) ? 1 : 0;
-            if (is_EOF){
-                cmd_response_buff[bytes_received-1] = '\0'; // replace the EOF char with a null
-                break;
-            }
-
-        }
-            printf("response from server: %s\n", cmd_response_buff);
-            // printf("length of response from server: %ld\n", strlen(cmd_response_buff));
-
-        // check if the command request is to exit or stop-server
-        if (strcmp(cmd_response_buff, "exit")== 0){
-            return client_cleanup(client_socket, cmd_request_buff, cmd_response_buff, OK);
-        } else if (strcmp(cmd_response_buff, "stop-server") == 0){
-            return client_cleanup(client_socket, cmd_request_buff, cmd_response_buff, STOP_SERVER_SC);
-        }
-    }
-    return client_cleanup(client_socket, cmd_request_buff, cmd_response_buff, OK);
+    return client_cleanup(cli_socket, cmd_buff, rsp_buff, OK);
 }
 
 /*
@@ -194,37 +146,14 @@ int exec_remote_cmd_loop(char *address, int port){
  * 
  */
 int start_client(char *server_ip, int port){
-    int client_socket;
     struct sockaddr_in addr;
+    int cli_socket;
+    int ret;
 
-    // create the client socket
-    printf("Creating client socket...\n");
-    client_socket = socket(AF_INET, SOCK_STREAM,0);
-    if (client_socket < 0){
-        perror("client socket");
-        return ERR_RDSH_CLIENT;
-    }
+    // TODO set up cli_socket
 
-    // set up the server address structure
-    memset(&addr, 0, sizeof(addr)); // initialize struct to zeros
-    addr.sin_family = AF_INET; 
-    addr.sin_port = htons(port); // convert to network byte by htons
 
-    if (inet_pton(AF_INET, server_ip, &addr.sin_addr)<= 0){ // convert the ip text to binary and store in the struct
-        perror("inet_pton");
-        close(client_socket);
-        return ERR_RDSH_CLIENT;
-    }
-    // connect to the server using the address structure created above
-    printf("Connecting to server at %s:%d...\n", server_ip, port);
-    if (connect(client_socket, (struct sockaddr *)&addr, sizeof(addr))<0){
-        perror("connecting to server");
-        close(client_socket);
-        return ERR_RDSH_CLIENT;
-    }
-    printf("Connected to server successfully.\n");
-
-    return client_socket;
+    return cli_socket;
 }
 
 /*

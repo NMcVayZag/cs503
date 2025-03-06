@@ -16,6 +16,7 @@
 
 #include "dshlib.h"
 #include "rshlib.h"
+#include <ctype.h>
 
 
 /*
@@ -47,7 +48,7 @@
  *      TO DO SOMETHING WITH THE is_threaded ARGUMENT HOWEVER.  
  */
 int start_server(char *ifaces, int port, int is_threaded){
-    int svr_socket;
+    int server_socket;
     int rc;
 
     //
@@ -55,16 +56,14 @@ int start_server(char *ifaces, int port, int is_threaded){
     //       to keep track of is_threaded to handle this feature
     //
 
-    svr_socket = boot_server(ifaces, port);
-    if (svr_socket < 0){
-        int err_code = svr_socket;  //server socket will carry error code
+    server_socket = boot_server(ifaces, port);
+    if (server_socket < 0){
+        int err_code = server_socket;  //server socket will carry error code
         return err_code;
     }
-
-    rc = process_cli_requests(svr_socket);
-
-    stop_server(svr_socket);
-
+    printf("Server started on %s:%d\n", ifaces, port);
+    rc = process_cli_requests(server_socket);
+    // establish a main loop to process client requests
 
     return rc;
 }
@@ -78,7 +77,11 @@ int start_server(char *ifaces, int port, int is_threaded){
  *      the socket.  
  */
 int stop_server(int svr_socket){
-    return close(svr_socket);
+    int rc = close(svr_socket);;
+    if (rc<0){
+        perror("closing server socket");
+    }
+    return rc;
 }
 
 /*
@@ -115,7 +118,45 @@ int stop_server(int svr_socket){
  * 
  */
 int boot_server(char *ifaces, int port){
-    return WARN_RDSH_NOT_IMPL;
+    int server_socket;
+    struct sockaddr_in server_address;
+    int enable = 1;
+
+    // create the server socket
+    server_socket = socket(AF_INET, SOCK_STREAM, 0);
+    if (server_socket < 0){
+        perror("socket");
+        return ERR_RDSH_COMMUNICATION;
+    }
+    if (setsockopt(server_socket, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(int)) < 0){
+        perror("setsockopt");
+        close(server_socket);
+        return ERR_RDSH_COMMUNICATION;
+    }
+    memset(&server_address, 0, sizeof(server_address)); // initialize the sever address structure with zeros
+    server_address.sin_family = AF_INET; //setting address family to AF_INET
+    server_address.sin_port = htons(port); // converting int port to network byte and setting it to server_address
+
+    if (inet_pton(AF_INET, ifaces, &server_address.sin_addr) <0){// converting text address to binary form and setting it to the server_address structure
+        perror("inet_pton address setting");
+        close(server_socket);
+        return ERR_RDSH_COMMUNICATION;
+    }
+    printf("Binding to %s:%d\n", ifaces, port);
+    if (bind(server_socket, (struct sockaddr *)&server_address, sizeof(server_address))<0){// bind server socket to selected interface and port
+        perror("bind");
+        close(server_socket);
+        return ERR_RDSH_COMMUNICATION;
+    }
+    printf("Listening for incoming connections...\n");
+    if (listen(server_socket, 20)< 0){ // listens for incoming connections max backlog of 20
+        perror("listen");
+        close(server_socket);
+        return ERR_RDSH_COMMUNICATION;
+    }
+
+
+    return server_socket;
 }
 
 /*
@@ -160,8 +201,43 @@ int boot_server(char *ifaces, int port){
  * 
  */
 int process_cli_requests(int svr_socket){
-    return WARN_RDSH_NOT_IMPL;
+    int rc;
+
+        while (1) {
+        int cli_socket;
+        struct sockaddr_in client_address;
+        socklen_t client_address_length = sizeof(client_address);
+
+        //accept incoming client connection
+        printf("Waiting for client connection...\n");
+        cli_socket = accept(svr_socket, (struct sockaddr *)&client_address, &client_address_length);
+        if (cli_socket <0){
+            perror("accepting client connection");
+            rc = ERR_RDSH_COMMUNICATION;
+            break;
+        }
+        printf("Accepted client connection\n");
+
+        rc = exec_client_requests(cli_socket);
+        printf("exec_client_requests returned %d\n", rc);
+
+        if (rc == STOP_SERVER_SC){
+            rc = OK_EXIT;
+            break;
+        } else if (rc<0){
+            printf("Client connection terminated with error code from exec_client_req %d\n", rc);
+            break;
+        } else if (rc == OK){
+            printf("Client connection terminated normally\n");
+        }
+    }
+
+    stop_server(svr_socket);
+    printf("Server stopped\n");
+
+    return rc;
 }
+
 
 /*
  * exec_client_requests(cli_socket)
@@ -205,7 +281,64 @@ int process_cli_requests(int svr_socket){
  *                or receive errors. 
  */
 int exec_client_requests(int cli_socket) {
-    return WARN_RDSH_NOT_IMPL;
+    int rc = OK;
+    int bytes_received;
+    int is_last_chunk;
+    char eof_char = RDSH_EOF_CHAR;
+    
+    while(1){
+        char *io_buff = malloc(RDSH_COMM_BUFF_SZ);
+        if (io_buff == NULL){
+            perror("malloc");
+            return ERR_RDSH_COMMUNICATION;
+        }
+
+
+            // while loop for collecting whole message from client
+        memset(io_buff, 0, RDSH_COMM_BUFF_SZ);
+        printf("trying to receive message from client...\n\n");
+        while((bytes_received = recv(cli_socket, io_buff, RDSH_COMM_BUFF_SZ - 1, 0)) > 0){
+            if (bytes_received < 0){
+                perror("recv");
+                rc = ERR_RDSH_COMMUNICATION;
+                break;
+            }
+            is_last_chunk = ((char)io_buff[bytes_received-1] == eof_char) ? 1 : 0; // check if the last byte is the EOF character
+            if (is_last_chunk){
+                io_buff[bytes_received-1] = '\0'; //remove the marker and replace with a null
+                                                  //this makes string processing easier
+                }
+
+            if (is_last_chunk){
+                break;
+            }
+        }
+        printf("buffer received from client: %s\n", io_buff);
+        // printf("length of buffer received from client: %ld\n", strlen(io_buff));
+
+
+        if (strcmp(io_buff, "exit") == 0){
+            send_message_string(cli_socket, io_buff);
+            rc = OK;
+            break;
+        } else if (strcmp(io_buff, "stop-server") == 0){
+            send_message_string(cli_socket, io_buff);
+            rc = STOP_SERVER_SC;
+            break;
+        }
+        //exeute given command
+        rc = rsh_execute_commands(cli_socket, io_buff);
+        if (rc != OK) {
+            break;
+        }
+        if(rc == OK){
+            free(io_buff);
+            send_message_eof(cli_socket);
+            break;
+        }
+    free(io_buff);
+    }
+    return rc;
 }
 
 /*
@@ -223,7 +356,13 @@ int exec_client_requests(int cli_socket) {
  *           we were unable to send the EOF character. 
  */
 int send_message_eof(int cli_socket){
-    return WARN_RDSH_NOT_IMPL;
+    char eof_char = RDSH_EOF_CHAR;
+    ssize_t bytes_sent = send(cli_socket, &eof_char, 1, 0);
+    if(bytes_sent <0) {
+        perror("sending EOF");
+        return ERR_RDSH_COMMUNICATION;
+    }
+    return OK;
 }
 
 /*
@@ -245,18 +384,255 @@ int send_message_eof(int cli_socket){
  *           we were unable to send the message followed by the EOF character. 
  */
 int send_message_string(int cli_socket, char *buff){
-    return WARN_RDSH_NOT_IMPL;
+    size_t len = strlen(buff);
+    if (len > 0 && buff[len - 1] == '\n') {
+        buff[len - 1] = RDSH_EOF_CHAR; // Replace newline character with EOF character
+    } else {
+        buff[len] = RDSH_EOF_CHAR; // Append EOF character
+        len++;
+    }
+    ssize_t bytes_sent = send(cli_socket, buff, len, 0);
+    if (bytes_sent<0){
+        return ERR_RDSH_COMMUNICATION;
+    }
+    return OK;
+}
+int server_parse_input(char *input, cmd_buff_t *cmd) {
+    cmd->_cmd_buffer = input; // using buffer instanitiated in exec_local_cmd_loop
+    char *buffer = cmd->_cmd_buffer; // buffer is now an alias for _cmd_buffer
+    cmd->argc =0; // set the arg count in the struct to zero
+
+    //trimming the leading spaces of the input
+    while(isspace((unsigned char)*buffer)) buffer++;
+    // printf("Current buff: %s\n", buffer);
+
+    // check if buffer is empty
+    if (*buffer == '\0') {
+    cmd->argv[0] = NULL; // null terminate first arg
+    printf("%s\n", CMD_WARN_NO_CMD);
+    return WARN_NO_CMDS;
+    }
+
+    // main parsing of user command
+    char *arg =buffer; // set arg to the start of the buffer
+    int in_quotes =0; // tracking if we are in a quoted string
+    char *write_ptr = buffer;  // setting up a pointrt to write out the cleaned output
+
+    while (*buffer){
+        if (*buffer == '"'){
+            in_quotes = !in_quotes;
+            buffer++; // if we hit quotes we toggle the inquotes variable
+        } else if(isspace((unsigned char)*buffer) && !in_quotes){ //if we hit a space and we're not in quotes
+                *write_ptr++ ='\0'; // null terminated the current arg since we are at the end
+                if (arg[0] != '\0') { // If the current argument is not empty
+                    cmd->argv[cmd->argc++] = arg; // add the current argment to argv
+            }
+            // eliminate trailing spaces
+            while (isspace((unsigned char)* (++buffer)));
+            arg = buffer; // set the arg to that beignin of next arg
+            continue;
+        }else {*write_ptr++ = *buffer++; // copy obver the characters to write ptr if not """ or space outside quotes
+            }
+        }
+    *write_ptr = '\0'; //null terminate the last argument
+    if (arg[0] != '\0'){ // checking that the last argument is not empty
+        cmd->argv[cmd->argc++] =arg; // add the argument to the argv list
+    }
+    cmd->argv[cmd->argc] = NULL; // null terminating the argv list
+
+    return 0;
+}
+int rsh_execute_commands(int cli_sock, char *buff) {
+    char cmd_buff[ARG_MAX];
+    int rc = 0;
+    
+    strcpy(cmd_buff, buff); // copy the buffer to a new buffer to avoid modifying the original buffer
+    printf("Executing command: %s\n", cmd_buff);
+        while(1){
+        //remove the trailing \n from cmd_buff
+        cmd_buff[strcspn(cmd_buff,"\n")] = '\0';
+
+        // seporating the input via pipes using strtok
+        char *commands[CMD_MAX];
+        int num_commands = 0;
+        char *command = strtok(cmd_buff, PIPE_STRING);
+        while (command != NULL && num_commands < CMD_MAX) { // while we have a command and we haven't reached max commands
+            commands[num_commands++] = command; // add the command to commands array
+            command = strtok(NULL, PIPE_STRING); // select the next command
+        }
+        // Check if the number of commands exceeds the limit
+        if (num_commands >= CMD_MAX) {
+            printf("Error: too many commands");
+            exit(EXIT_FAILURE);
+        }
+
+        // checking if there was no input
+        if (num_commands == 0) {
+            printf("%s\n", CMD_WARN_NO_CMD);
+            break;
+        }
+        // establish if we need pipes for command 
+        int pipes_neccessary = 2 *(num_commands-1);
+
+        int pids[num_commands];
+        int statuses[num_commands];
+        int pipe_fds[num_commands - 1][2];
+
+        
+        for (int i = 0; i < num_commands - 1; i++) { // creating each pipe with a read and write file descriptor
+            if (pipe(pipe_fds[i]) < 0) { // runs pipe function to store the read and write file descriptors in correct slots in array based on i
+                perror("pipe"); // prints error on failure of piping
+                exit(EXIT_FAILURE);
+            }
+            printf("Pipe %d created: read_fd=%d, write_fd=%d\n", i, pipe_fds[i][0], pipe_fds[i][1]); // Debugging statement
+        }
+        
+
+        
+        for (int i = 0; i < num_commands; i++) {
+            cmd_buff_t cmd;
+            memset(&cmd, 0, sizeof(cmd_buff_t)); // Reset cmd_buff_t structure
+
+            // Trim leading and trailing spaces
+            while (isspace((unsigned char)*commands[i])) commands[i]++;
+            char *end = commands[i] + strlen(commands[i]) - 1;
+            while (end > commands[i] && isspace((unsigned char)*end)) end--;
+            *(end + 1) = '\0';
+
+            // parse the command from commands array
+            if (server_parse_input(commands[i], &cmd) == WARN_NO_CMDS) {
+                printf("%s\n", CMD_WARN_NO_CMD);
+                continue;
+            }
+
+            // Print the command and its arguments
+            printf("Command: %s\n", cmd.argv[0]);
+            printf("Arguments: ");
+            for (int j = 0; j < cmd.argc; j++) {
+                printf("%s ", cmd.argv[j]);
+            }
+            printf("\n");
+
+            // Check if the command is "cd"
+            if (strcmp(cmd.argv[0], "cd") == 0) {
+                if (cmd.argc < 2) {
+                    fprintf(stderr, "cd: missing argument\n");
+                } else {
+                    if (chdir(cmd.argv[1]) != 0) {
+                        perror("cd");
+                    }
+                }
+                continue;
+            }
+
+            pid_t pid = fork(); //  create new process by duplicating the current one
+            if (pid == 0) {
+                // Child process
+                printf("got to child process");
+
+                pids[i] = getpid(); // add pid to list 
+
+                if (pipes_neccessary > 0){
+
+                    if (i > 0) { // check if we are not on the first command
+                        // Redirect input from the previous pipe
+                        printf("Child process %d: redirecting stdin to pipe %d read_fd=%d\n", getpid(), i - 1, pipe_fds[i - 1][0]); // Debugging statement
+                        if (dup2(pipe_fds[i - 1][0], STDIN_FILENO) < 0) { // duping the read file descriptor of the previous pipe to standard input for current command
+                            perror("dup2 stdin");
+                            exit(EXIT_FAILURE);
+                        }
+                    }
+                    if (i < num_commands - 1) { // check if we are not at the last command
+                        // Redirect output to the next pipe
+                        printf("Child process %d: redirecting stdout to pipe %d write_fd=%d\n", getpid(), i, pipe_fds[i][1]); // Debugging statement
+                        if (dup2(pipe_fds[i][1], STDOUT_FILENO) < 0) { // duping the write file descriptor for next pipe to standard output of current command
+                            perror("dup2 stdout");
+                            exit(EXIT_FAILURE);
+                        }
+                    }else {
+                        // Redirect output to the client socket
+                        printf("Child process %d: redirecting stdout to client socket\n", getpid()); // Debugging statement
+                        if (dup2(cli_sock, STDOUT_FILENO) < 0) {
+                            perror("dup2 stdout to client socket");
+                            exit(EXIT_FAILURE);
+                        }
+                    }
+
+                    // Close all pipe file descriptors in child process since necessary ones have been duped to standard input and output and so they cannot be picked up by other child processes
+                    for (int j = 0; j < num_commands - 1; j++) {
+                        close(pipe_fds[j][0]);
+                        close(pipe_fds[j][1]);
+                        printf("Child process %d: closed pipe %d read_fd=%d, write_fd=%d\n", getpid(), j, pipe_fds[j][0], pipe_fds[j][1]); // Debugging statement
+                    }
+
+                    // execute the command with its arguments by replacing current process with the new process.
+                    if (execvp(cmd.argv[0], cmd.argv) == -1) {
+                        perror("execvp");
+                        exit(EXIT_FAILURE);
+                    }
+            } 
+            if (pipes_neccessary == 0) {
+                if (dup2(cli_sock, STDOUT_FILENO)<0){
+                    printf("Error redirecting single command output to client socket\n");
+                }
+
+                // Execute the command with its arguments by replacing the current process with the new process
+                if (execvp(cmd.argv[0], cmd.argv) == -1) {
+                    perror("execvp");
+                    exit(EXIT_FAILURE);
+                }
+                }
+            } else if (pid < 0) {
+                // Fork failed
+                perror("fork");
+                exit(EXIT_FAILURE);
+            }
+        }
+    // Close all pipe file descriptors in the parent process so we avoid any resource leaks
+    for (int i = 0; i < num_commands - 1; i++) {
+        close(pipe_fds[i][0]);
+        close(pipe_fds[i][1]);
+        printf("Parent process: closed pipe %d read_fd=%d, write_fd=%d\n", i, pipe_fds[i][0], pipe_fds[i][1]); // Debugging statement
+    }
+        
+
+        // Wait for all child processes to finish
+        for (int i = 0; i < num_commands; i++) {
+            int status;
+            wait(&status);
+            // pid_t child_pid = waitpid(pids[i], &status,0);
+            // if (child_pid == -1){
+            //     rc = -1;
+            //     printf("Error waiting for child process\n");
+            // }
+            if (WIFEXITED(status) && WEXITSTATUS(status) != 0) { //check if child procces was successful
+                printf("Child process with PID %d exited with status %d\n", pids[i], WEXITSTATUS(status));
+                rc = OK;
+                
+            }
+        }
+        
+
+        break;
+    }
+    close(cli_sock);
+
+    return rc;
 }
 
 
+
+
+
+
+
+
 /*
- * rsh_execute_pipeline(int cli_sock, command_list_t *clist)
+ * execute_commands(int cli_sock, char *buff)
  *      cli_sock:    The server-side socket that is connected to the client
- *      clist:       The command_list_t structure that we implemented in
- *                   the last shell. 
+ *      *buff:       The command from the user
  *   
- *  This function executes the command pipeline.  It should basically be a
- *  replica of the execute_pipeline() function from the last deliverable. 
+ *  This function executes the command pipeline.
  *  The only thing different is that you will be using the cli_sock as the
  *  main file descriptor on the first executable in the pipeline for STDIN,
  *  and the cli_sock for the file descriptor for STDOUT, and STDERR for the
@@ -287,9 +663,134 @@ int send_message_string(int cli_socket, char *buff){
  *                  macro that we discussed during our fork/exec lecture to
  *                  get this value. 
  */
-int rsh_execute_pipeline(int cli_sock, command_list_t *clist) {
-    return WARN_RDSH_NOT_IMPL;
-}
+// int rsh_execute_commands(int cli_sock, char *buff) {
+//     char cmd_buff[ARG_MAX];
+//     int rc = 0;
+//     strcpy(cmd_buff, buff); // copy the buffer to a new buffer to avoid modifying the original buffer
+//     printf("Executing command: %s\n", cmd_buff);
+
+//     // Separating the input via pipes using strtok
+//     char *commands[CMD_MAX];
+//     int num_commands = 0;
+//     char *command = strtok(cmd_buff, PIPE_STRING);
+//     while (command != NULL && num_commands < CMD_MAX) { // while we have a command and we haven't reached max commands
+//         commands[num_commands++] = command; // add the command to commands array
+//         command = strtok(NULL, PIPE_STRING); // select the next command
+//     }
+//      // Check if the number of commands exceeds the limit
+//     if (num_commands >= CMD_MAX) {
+//         printf("Error: too many commands");
+//         exit(EXIT_FAILURE);
+//     }
+
+//     // checking if there was no input
+//     if (num_commands == 0) {
+//         printf("%s\n", CMD_WARN_NO_CMD);
+//         return WARN_NO_CMDS;
+//     }
+
+//     int pipe_fds[2 * (num_commands - 1)]; // declaring a pipe file descriptors array given that we need two file descriptors per pipe and there is one less pipe than no. of commands
+//     for (int i = 0; i < num_commands - 1; i++) { // creating each pipe with a read and write file descriptor that will be overwritten by commands
+//         if (pipe(pipe_fds + 2 * i) < 0) { // runs pipe function to store the read and write file descriptors in correct slots in array based on i
+//             perror("pipe"); // prints error on failure of piping
+//             exit(EXIT_FAILURE);
+//         }
+//     }
+
+//     for (int i = 0; i < num_commands; i++) {
+//         cmd_buff_t cmd;
+//         memset(&cmd, 0, sizeof(cmd_buff_t)); // Reset cmd_buff_t structure
+
+//         // Trim leading and trailing spaces
+//         while (isspace((unsigned char)*commands[i])) commands[i]++;
+//         char *end = commands[i] + strlen(commands[i]) - 1;
+//         while (end > commands[i] && isspace((unsigned char)*end)) end--;
+//         *(end + 1) = '\0';
+
+//         // parse the command from commands array
+//         if (server_parse_input(commands[i], &cmd) == WARN_NO_CMDS) {
+//             printf("%s\n", CMD_WARN_NO_CMD);
+//             continue;
+//         }
+//         // Check if the command is "cd"
+//         if (strcmp(cmd.argv[0], "cd") == 0) {
+//             if (cmd.argc < 2) {
+//                 fprintf(stderr, "cd: missing argument\n");
+//             } else {
+//                 if (chdir(cmd.argv[1]) != 0) {
+//                     perror("cd");
+//                 }
+//             }
+//             continue;
+//         }
+//         printf("Executing command: %s\n", cmd.argv[0]);
+//         printf("forking..\n");
+//         pid_t pid = fork(); // create new process by duplicating the current one
+//         if (pid < 0) {
+//             perror("fork");
+//             exit(EXIT_FAILURE);
+//         } else if (pid == 0) {
+//             // Child process
+
+//             // Set up stdin
+//             if (i == 0) {
+//                 if (dup2(cli_sock, STDIN_FILENO) < 0) {
+//                     perror("dup2 stdin");
+//                     exit(EXIT_FAILURE);
+//                 }
+//             } else {
+//                 if (dup2(pipe_fds[(i - 1) * 2], STDIN_FILENO) < 0) {
+//                     perror("dup2 stdin");
+//                     exit(EXIT_FAILURE);
+//                 }
+//             }
+//              // Set up stdout
+//             if (i == num_commands - 1) {
+//                 if (dup2(cli_sock, STDOUT_FILENO) < 0) {
+//                     perror("dup2 stdout");
+//                     exit(EXIT_FAILURE);
+//                 }
+//                 if (dup2(cli_sock, STDERR_FILENO) < 0) {
+//                     perror("dup2 stderr");
+//                     exit(EXIT_FAILURE);
+//                 }
+//             } else {
+//                 if (dup2(pipe_fds[i * 2 + 1], STDOUT_FILENO) < 0) {
+//                     perror("dup2 stdout");
+//                     exit(EXIT_FAILURE);
+//                 }
+//             }
+
+//             // closing all pipe file desciptors in child process since neccessary ones have been duped to standard input and output and so they cannot be picked up by other child processes
+//             for (int j = 0; j < 2 * (num_commands - 1); j++) {
+//                 close(pipe_fds[j]);
+//             }
+
+//             // execute the command with its arguments by replacing current process with the new process.
+//             execvp(cmd.argv[0], cmd.argv);
+//         }
+
+//     }
+
+//     // Close all pipe file descriptors in the parent process so we avoid any resource leaks
+//     for (int i = 0; i < 2 * (num_commands - 1); i++) {
+//         close(pipe_fds[i]);
+//     }
+
+//     // Wait for all child processes to finish
+//     for (int i = 0; i < num_commands; i++) {
+//         int status;
+//         wait(&status);
+//         printf("Child process exited with status %d\n", WEXITSTATUS(status));
+//         if (i == num_commands - 1) {
+//         rc = WEXITSTATUS(status);
+//         }
+//     }
+    
+    
+
+//     return rc;
+// }
 
 /**************   OPTIONAL STUFF  ***************/
 /****
