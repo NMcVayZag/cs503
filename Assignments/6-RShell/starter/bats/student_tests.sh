@@ -66,6 +66,7 @@ start_server() {
     ./dsh -s &
     SERVER_PID=$!
     sleep 1  # Give the server time to start
+    echo "Server started with PID $SERVER_PID"
 }
 stop_server() {
     if [ -n "$SERVER_PID" ]; then
@@ -73,7 +74,7 @@ stop_server() {
         wait $SERVER_PID 2>/dev/null || true
     fi
 }
-@test "remote ls command" {
+@test "Remote ls command" {
     start_server
 
     run ./dsh -c <<EOF
@@ -81,16 +82,117 @@ ls
 stop-server
 EOF
 
-    # Assertions
-    [ "$status" -eq 0 ]
-    [ "${#lines[@]}" -ge 5 ]  # Check that there are at least 5 lines of output
-    echo "Output:"
-    for line in "${lines[@]}"; do
-        echo "$line"
-    done
-        # Check if the actual output matches the expected output
-    if [ "${lines[0]}" != "$expected_output" ]; then
-        echo "Expected: $expected_output"
-        echo "Received: ${lines[0]}"
+    # Strip all whitespace (spaces, tabs, newlines) from the output
+    stripped_output=$(echo "$output" | tr -d '[:space:]')
+
+    # These echo commands will help with debugging and will only print if the test fails
+    echo "Captured stdout:" 
+    echo "Output: $output"
+    echo "Exit Status: $status"
+    expected_substring="responsefromserver:batsdshdsh_cli.cdshlib.cdshlib.hmakefilersh_cli.crsh_server.crshlib.h"
+
+  
+    #echo "Output:"
+    #for line in "${lines[@]}"; do
+        #echo "$line"
+    #done
+        # Check if the actual output contains expected output
+    if [[ "$stripped_output" != *"$expected_substring"* ]]; then
+        echo "Expected substring not found in output"
+        echo "Expected substring: $expected_substring"
+        echo "Stripped Output: $stripped_output"
     fi
+        # Assertions
+    [ "$status" -eq 0 ]
+        # Check if ls response is received
+    [[ "$stripped_output" == *"$expected_substring"* ]]
+}
+
+@test "Remote single piping: ls | wc -l" {
+    start_server
+
+    run ./dsh -c <<EOF
+ls | wc -l
+stop-server
+EOF
+
+    # Strip all whitespace (spaces, tabs, newlines) from the output
+    stripped_output=$(echo "$output" | tr -d '[:space:]')
+
+    # These echo commands will help with debugging and will only print if the test fails
+    echo "Captured stdout:" 
+    echo "Output: $output"
+    echo "Exit Status: $status"
+    expected_substring="responsefromserver:9"
+
+        # Check if the actual output contains expected output
+    if [[ "$stripped_output" != *"$expected_substring"* ]]; then
+        echo "Expected substring not found in output"
+        echo "Expected substring: $expected_substring"
+        echo "Stripped Output: $stripped_output"
+    fi
+        # Assertions
+    [ "$status" -eq 0 ]
+        # Check if ls response is received
+    [[ "$stripped_output" == *"$expected_substring"* ]]
+}
+
+@test "Remote multi piping: echo -e 'line1\nline2\nline3' | grep line | wc -l" {
+    start_server
+
+    run ./dsh -c <<EOF
+echo -e 'line1\nline2\nline3' | grep line | wc -l
+stop-server
+EOF
+
+    # Strip all whitespace (spaces, tabs, newlines) from the output
+    stripped_output=$(echo "$output" | tr -d '[:space:]')
+
+    # These echo commands will help with debugging and will only print if the test fails
+    echo "Captured stdout:" 
+    echo "Output: $output"
+    echo "Exit Status: $status"
+    expected_substring="responsefromserver:3"
+
+        # Check if the actual output contains expected output
+    if [[ "$stripped_output" != *"$expected_substring"* ]]; then
+        echo "Expected substring not found in output"
+        echo "Expected substring: $expected_substring"
+        echo "Stripped Output: $stripped_output"
+    fi
+        # Assertions
+    [ "$status" -eq 0 ]
+        # Check if ls response is received
+    [[ "$stripped_output" == *"$expected_substring"* ]]
+}
+
+@test "Remote invalid command check" {
+    start_server
+
+    run ./dsh -c <<EOF
+apple
+stop-server
+EOF
+
+    # Strip all whitespace (spaces, tabs, newlines) from the output
+    stripped_output=$(echo "$output" | tr -d '[:space:]')
+
+
+    # These echo commands will help with debugging and will only print if the test fails
+    echo "Captured stdout:" 
+    echo "Output: $output"
+    echo "StrippedOutput: $strippedoutput"
+    echo "Exit Status: $status"
+    expected_substring="Executingcommand:appleinvalidinput"
+
+        # Check if the actual output contains expected output
+    if [[ "$stripped_output" != *"$expected_substring"* ]]; then
+        echo "Expected substring not found in output"
+        echo "Expected substring: $expected_substring"
+        echo "Stripped Output: $stripped_output"
+    fi
+        # Assertions
+    [ "$status" -eq 0 ]
+        # Check if ls response is received
+    [[ "$stripped_output" == *"$expected_substring"* ]]
 }
