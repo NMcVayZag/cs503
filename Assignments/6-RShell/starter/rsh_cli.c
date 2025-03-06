@@ -94,6 +94,13 @@ int exec_remote_cmd_loop(char *address, int port){
     ssize_t bytes_received;
     int is_EOF;
 
+    // create a client connection to the server
+    client_socket = start_client(address, port);
+    if (client_socket < 0){
+        return client_cleanup(client_socket, cmd_request_buff, cmd_response_buff, ERR_RDSH_CLIENT);
+    }
+
+
     // allocate buffers for sending req and recieving responses
     cmd_request_buff = malloc(RDSH_COMM_BUFF_SZ);
     cmd_response_buff = malloc(RDSH_COMM_BUFF_SZ);
@@ -102,11 +109,6 @@ int exec_remote_cmd_loop(char *address, int port){
         return client_cleanup(client_socket, cmd_request_buff, cmd_response_buff, ERR_MEMORY);
     }
 
-    // create a client connection to the server
-    client_socket = start_client(address, port);
-    if (client_socket < 0){
-        return client_cleanup(client_socket, cmd_request_buff, cmd_response_buff, ERR_RDSH_CLIENT);
-    }
 
     int flags = fcntl(client_socket, F_GETFL);
     if (flags == -1) {
@@ -172,7 +174,7 @@ int exec_remote_cmd_loop(char *address, int port){
             return client_cleanup(client_socket, cmd_request_buff, cmd_response_buff, OK);
         }
         
-        printf("response from server: %s\n", cmd_response_buff);
+        printf("response from server: %s\n\n", cmd_response_buff);
         // printf("length of response from server: %ld\n", strlen(cmd_response_buff));
 
         // check if the command request is to exit or stop-server

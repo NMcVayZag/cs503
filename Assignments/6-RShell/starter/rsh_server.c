@@ -50,6 +50,7 @@
 int start_server(char *ifaces, int port, int is_threaded){
     int server_socket;
     int rc;
+    
 
     //
     //TODO:  If you are implementing the extra credit, please add logic
@@ -311,8 +312,6 @@ int exec_client_requests(int cli_socket) {
                 break;
             }
         }
-        //printf("buffer received from client: %s\n", io_buff);
-        // printf("length of buffer received from client: %ld\n", strlen(io_buff));
 
 
         if (strcmp(io_buff, "exit") == 0){
@@ -323,14 +322,12 @@ int exec_client_requests(int cli_socket) {
             send_message_string(cli_socket, io_buff);
             rc = STOP_SERVER_SC;
             break;
-        }
-        //exeute given command
-        if (bytes_received > 0 ) {
-            printf("buffer received from client: %s\n", io_buff);
+        } else if (bytes_received > 0 ) { // if command is not exit and a message was received then execute command
+            printf("\n\nbuffer received from client: %s\n", io_buff);
             rc = rsh_execute_commands(cli_socket, io_buff);
             printf("main execution returned: %d\n",rc);
             if (rc != OK) {
-                printf("Error occured. Retry command.");
+                printf("invalid command");
             }
             if(rc == OK){
                 send_message_eof(cli_socket);
@@ -465,20 +462,19 @@ int rsh_execute_commands(int cli_sock, char *buff) {
         }
         // Check if the number of commands exceeds the limit
         if (num_commands >= CMD_MAX) {
-            printf("Error: too many commands");
-            exit(EXIT_FAILURE);
+            printf("Error: too many commands\n");
+            rc = 1;
+            char toomany[40];
+            strcpy(toomany, "Invalid request: Too many commands");
+            send_message_string(cli_sock, toomany);
+            return rc;
+            
         }
 
-        // checking if there was no input
-        if (num_commands == 0) {
-            printf("%s\n", CMD_WARN_NO_CMD);
-            break;
-        }
         // establish if we need pipes for command 
         int pipes_neccessary = 2 *(num_commands-1);
 
         int pids[num_commands];
-        int statuses[num_commands];
         int pipe_fds[num_commands - 1][2];
 
         
@@ -487,7 +483,7 @@ int rsh_execute_commands(int cli_sock, char *buff) {
                 perror("pipe"); // prints error on failure of piping
                 exit(EXIT_FAILURE);
             }
-            printf("Pipe %d created: read_fd=%d, write_fd=%d\n", i, pipe_fds[i][0], pipe_fds[i][1]); // Debugging statement
+            //printf("Pipe %d created: read_fd=%d, write_fd=%d\n", i, pipe_fds[i][0], pipe_fds[i][1]); // Debugging statement
         }
         
 
@@ -508,13 +504,13 @@ int rsh_execute_commands(int cli_sock, char *buff) {
                 continue;
             }
 
-            // Print the command and its arguments
-            printf("Command: %s\n", cmd.argv[0]);
-            printf("Arguments: ");
-            for (int j = 0; j < cmd.argc; j++) {
-                printf("%s ", cmd.argv[j]);
-            }
-            printf("\n");
+            // // Print the command and its arguments
+            // printf("Command: %s\n", cmd.argv[0]);
+            // printf("Arguments: ");
+            // for (int j = 0; j < cmd.argc; j++) {
+            //     printf("%s ", cmd.argv[j]);
+            // }
+            // printf("\n");
 
             // Check if the command is "cd"
             if (strcmp(cmd.argv[0], "cd") == 0) {
@@ -528,13 +524,11 @@ int rsh_execute_commands(int cli_sock, char *buff) {
                 continue;
             }
 
-            printf("we are starting to fork\n");
+            
             pid_t pid = fork(); //  create new process by duplicating the current one
-            printf("pid: %d\n", pid);
+            //printf("pid: %d\n", pid);
             if (pid == 0) {
                 // Child process
-                printf("got to child process\n");
-                fflush(stdout);
 
                 pids[i] = getpid(); // add pid to list 
 
@@ -542,7 +536,7 @@ int rsh_execute_commands(int cli_sock, char *buff) {
 
                     if (i > 0) { // check if we are not on the first command
                         // Redirect input from the previous pipe
-                        printf("Child process %d: redirecting stdin to pipe %d read_fd=%d\n", getpid(), i - 1, pipe_fds[i - 1][0]); // Debugging statement
+                        //printf("Child process %d: redirecting stdin to pipe %d read_fd=%d\n", getpid(), i - 1, pipe_fds[i - 1][0]); // Debugging statement
                         if (dup2(pipe_fds[i - 1][0], STDIN_FILENO) < 0) { // duping the read file descriptor of the previous pipe to standard input for current command
                             perror("dup2 stdin");
                             exit(EXIT_FAILURE);
@@ -550,16 +544,20 @@ int rsh_execute_commands(int cli_sock, char *buff) {
                     }
                     if (i < num_commands - 1) { // check if we are not at the last command
                         // Redirect output to the next pipe
-                        printf("Child process %d: redirecting stdout to pipe %d write_fd=%d\n", getpid(), i, pipe_fds[i][1]); // Debugging statement
+                        //printf("Child process %d: redirecting stdout to pipe %d write_fd=%d\n", getpid(), i, pipe_fds[i][1]); // Debugging statement
                         if (dup2(pipe_fds[i][1], STDOUT_FILENO) < 0) { // duping the write file descriptor for next pipe to standard output of current command
                             perror("dup2 stdout");
                             exit(EXIT_FAILURE);
                         }
                     }else {
                         // Redirect output to the client socket
-                        printf("Child process %d: redirecting stdout to client socket\n", getpid()); // Debugging statement
+                        //printf("Child process %d: redirecting stdout to client socket\n", getpid()); // Debugging statement
                         if (dup2(cli_sock, STDOUT_FILENO) < 0) {
                             perror("dup2 stdout to client socket");
+                            exit(EXIT_FAILURE);
+                        }
+                        if (dup2(cli_sock, STDERR_FILENO) < 0) {
+                            perror("dup2 stdERR to client socket");
                             exit(EXIT_FAILURE);
                         }
                         // fflush(stdout);
@@ -569,7 +567,7 @@ int rsh_execute_commands(int cli_sock, char *buff) {
                     for (int j = 0; j < num_commands - 1; j++) {
                         close(pipe_fds[j][0]);
                         close(pipe_fds[j][1]);
-                        printf("Child process %d: closed pipe %d read_fd=%d, write_fd=%d\n", getpid(), j, pipe_fds[j][0], pipe_fds[j][1]); // Debugging statement
+                        //printf("Child process %d: closed pipe %d read_fd=%d, write_fd=%d\n", getpid(), j, pipe_fds[j][0], pipe_fds[j][1]); // Debugging statement
                     }
 
                     // execute the command with its arguments by replacing current process with the new process.
@@ -589,8 +587,7 @@ int rsh_execute_commands(int cli_sock, char *buff) {
                     perror("execvp");
                     exit(EXIT_FAILURE);
                 }
-                // printf("flushing single command");
-                fflush(stdout);
+
                 }
             } else if (pid < 0) {
                 // Fork failed
@@ -603,7 +600,7 @@ int rsh_execute_commands(int cli_sock, char *buff) {
     for (int i = 0; i < num_commands - 1; i++) {
         close(pipe_fds[i][0]);
         close(pipe_fds[i][1]);
-        printf("Parent process: closed pipe %d read_fd=%d, write_fd=%d\n", i, pipe_fds[i][0], pipe_fds[i][1]); // Debugging statement
+        //printf("Parent process: closed pipe %d read_fd=%d, write_fd=%d\n", i, pipe_fds[i][0], pipe_fds[i][1]); // Debugging statement
     }
         
 
@@ -611,27 +608,17 @@ int rsh_execute_commands(int cli_sock, char *buff) {
         for (int i = 0; i < num_commands; i++) {
             int status;
             wait(&status);
-            // pid_t child_pid = waitpid(pids[i], &status,0);
-            // if (child_pid == -1){
-            //     rc = -1;
-            //     printf("Error waiting for child process\n");
-            // }
             if (WIFEXITED(status) && WEXITSTATUS(status) != 0) { //check if child procces was successful
                 printf("Child process with PID %d exited with status %d\n", pids[i], WEXITSTATUS(status));
-                printf("hit error code hi nick");
                 rc = 1;
-                char buf[10];
-                strcpy(buf, "send");
+                char buf[20];
+                strcpy(buf, "invalid input");
                 send_message_string(cli_sock, buf);
             }
         }
-        
-
-        
-        break;
+        break; 
     }
     
-    fflush(stdout);
     return rc;
 }
 
@@ -642,170 +629,7 @@ int rsh_execute_commands(int cli_sock, char *buff) {
 
 
 
-/*
- * execute_commands(int cli_sock, char *buff)
- *      cli_sock:    The server-side socket that is connected to the client
- *      *buff:       The command from the user
- *   
- *  This function executes the command pipeline.
- *  The only thing different is that you will be using the cli_sock as the
- *  main file descriptor on the first executable in the pipeline for STDIN,
- *  and the cli_sock for the file descriptor for STDOUT, and STDERR for the
- *  last executable in the pipeline.  See picture below:  
- * 
- *      
- *┌───────────┐                                                    ┌───────────┐
- *│ cli_sock  │                                                    │ cli_sock  │
- *└─────┬─────┘                                                    └────▲──▲───┘
- *      │   ┌──────────────┐     ┌──────────────┐     ┌──────────────┐  │  │    
- *      │   │   Process 1  │     │   Process 2  │     │   Process N  │  │  │    
- *      │   │              │     │              │     │              │  │  │    
- *      └───▶stdin   stdout├─┬──▶│stdin   stdout├─┬──▶│stdin   stdout├──┘  │    
- *          │              │ │   │              │ │   │              │     │    
- *          │        stderr├─┘   │        stderr├─┘   │        stderr├─────┘    
- *          └──────────────┘     └──────────────┘     └──────────────┘   
- *                                                      WEXITSTATUS()
- *                                                      of this last
- *                                                      process to get
- *                                                      the return code
- *                                                      for this function       
- * 
- *  Returns:
- * 
- *      EXIT_CODE:  This function returns the exit code of the last command
- *                  executed in the pipeline.  If only one command is executed
- *                  that value is returned.  Remember, use the WEXITSTATUS()
- *                  macro that we discussed during our fork/exec lecture to
- *                  get this value. 
- */
-// int rsh_execute_commands(int cli_sock, char *buff) {
-//     char cmd_buff[ARG_MAX];
-//     int rc = 0;
-//     strcpy(cmd_buff, buff); // copy the buffer to a new buffer to avoid modifying the original buffer
-//     printf("Executing command: %s\n", cmd_buff);
 
-//     // Separating the input via pipes using strtok
-//     char *commands[CMD_MAX];
-//     int num_commands = 0;
-//     char *command = strtok(cmd_buff, PIPE_STRING);
-//     while (command != NULL && num_commands < CMD_MAX) { // while we have a command and we haven't reached max commands
-//         commands[num_commands++] = command; // add the command to commands array
-//         command = strtok(NULL, PIPE_STRING); // select the next command
-//     }
-//      // Check if the number of commands exceeds the limit
-//     if (num_commands >= CMD_MAX) {
-//         printf("Error: too many commands");
-//         exit(EXIT_FAILURE);
-//     }
-
-//     // checking if there was no input
-//     if (num_commands == 0) {
-//         printf("%s\n", CMD_WARN_NO_CMD);
-//         return WARN_NO_CMDS;
-//     }
-
-//     int pipe_fds[2 * (num_commands - 1)]; // declaring a pipe file descriptors array given that we need two file descriptors per pipe and there is one less pipe than no. of commands
-//     for (int i = 0; i < num_commands - 1; i++) { // creating each pipe with a read and write file descriptor that will be overwritten by commands
-//         if (pipe(pipe_fds + 2 * i) < 0) { // runs pipe function to store the read and write file descriptors in correct slots in array based on i
-//             perror("pipe"); // prints error on failure of piping
-//             exit(EXIT_FAILURE);
-//         }
-//     }
-
-//     for (int i = 0; i < num_commands; i++) {
-//         cmd_buff_t cmd;
-//         memset(&cmd, 0, sizeof(cmd_buff_t)); // Reset cmd_buff_t structure
-
-//         // Trim leading and trailing spaces
-//         while (isspace((unsigned char)*commands[i])) commands[i]++;
-//         char *end = commands[i] + strlen(commands[i]) - 1;
-//         while (end > commands[i] && isspace((unsigned char)*end)) end--;
-//         *(end + 1) = '\0';
-
-//         // parse the command from commands array
-//         if (server_parse_input(commands[i], &cmd) == WARN_NO_CMDS) {
-//             printf("%s\n", CMD_WARN_NO_CMD);
-//             continue;
-//         }
-//         // Check if the command is "cd"
-//         if (strcmp(cmd.argv[0], "cd") == 0) {
-//             if (cmd.argc < 2) {
-//                 fprintf(stderr, "cd: missing argument\n");
-//             } else {
-//                 if (chdir(cmd.argv[1]) != 0) {
-//                     perror("cd");
-//                 }
-//             }
-//             continue;
-//         }
-//         printf("Executing command: %s\n", cmd.argv[0]);
-//         printf("forking..\n");
-//         pid_t pid = fork(); // create new process by duplicating the current one
-//         if (pid < 0) {
-//             perror("fork");
-//             exit(EXIT_FAILURE);
-//         } else if (pid == 0) {
-//             // Child process
-
-//             // Set up stdin
-//             if (i == 0) {
-//                 if (dup2(cli_sock, STDIN_FILENO) < 0) {
-//                     perror("dup2 stdin");
-//                     exit(EXIT_FAILURE);
-//                 }
-//             } else {
-//                 if (dup2(pipe_fds[(i - 1) * 2], STDIN_FILENO) < 0) {
-//                     perror("dup2 stdin");
-//                     exit(EXIT_FAILURE);
-//                 }
-//             }
-//              // Set up stdout
-//             if (i == num_commands - 1) {
-//                 if (dup2(cli_sock, STDOUT_FILENO) < 0) {
-//                     perror("dup2 stdout");
-//                     exit(EXIT_FAILURE);
-//                 }
-//                 if (dup2(cli_sock, STDERR_FILENO) < 0) {
-//                     perror("dup2 stderr");
-//                     exit(EXIT_FAILURE);
-//                 }
-//             } else {
-//                 if (dup2(pipe_fds[i * 2 + 1], STDOUT_FILENO) < 0) {
-//                     perror("dup2 stdout");
-//                     exit(EXIT_FAILURE);
-//                 }
-//             }
-
-//             // closing all pipe file desciptors in child process since neccessary ones have been duped to standard input and output and so they cannot be picked up by other child processes
-//             for (int j = 0; j < 2 * (num_commands - 1); j++) {
-//                 close(pipe_fds[j]);
-//             }
-
-//             // execute the command with its arguments by replacing current process with the new process.
-//             execvp(cmd.argv[0], cmd.argv);
-//         }
-
-//     }
-
-//     // Close all pipe file descriptors in the parent process so we avoid any resource leaks
-//     for (int i = 0; i < 2 * (num_commands - 1); i++) {
-//         close(pipe_fds[i]);
-//     }
-
-//     // Wait for all child processes to finish
-//     for (int i = 0; i < num_commands; i++) {
-//         int status;
-//         wait(&status);
-//         printf("Child process exited with status %d\n", WEXITSTATUS(status));
-//         if (i == num_commands - 1) {
-//         rc = WEXITSTATUS(status);
-//         }
-//     }
-    
-    
-
-//     return rc;
-// }
 
 /**************   OPTIONAL STUFF  ***************/
 /****
